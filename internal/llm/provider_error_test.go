@@ -212,3 +212,34 @@ func TestWithProviderErrorBody_IsIdempotent(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenAIResponsesClient_SurfacesArrayWrappedErrorBody covers the Responses
+// API exit. It routes its request error through withProviderErrorBody too, but
+// no other test drives that client, so this guards the wiring against removal.
+func TestOpenAIResponsesClient_SurfacesArrayWrappedErrorBody(t *testing.T) {
+	const body = `[{"error":{"code":400,"message":"responses request rejected by gateway","status":"INVALID_ARGUMENT"}}]`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Errorf("write error body: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewOpenAIResponsesClient(ClientConfig{
+		URL:    server.URL + "/v1",
+		APIKey: "test-key",
+		Model:  "custom-model",
+	})
+
+	_, err := client.CompletionsWithCtx(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "ping"}},
+	})
+	if err == nil {
+		t.Fatal("expected a provider error, got nil")
+	}
+	if !strings.Contains(err.Error(), "responses request rejected by gateway") {
+		t.Fatalf("Responses API did not surface the array-wrapped body: %v", err)
+	}
+}
