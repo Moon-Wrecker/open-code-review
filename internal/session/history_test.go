@@ -668,3 +668,34 @@ func TestAppendTaskRecord_CopiesToolCallExtraContent(t *testing.T) {
 		t.Errorf("AppendTaskRecord should store a copy of ExtraContent, got %s", got)
 	}
 }
+
+// TestToolCallsForJSON_KeepsFieldOrder guards the llm_request byte format. A map
+// projection sorts its keys, which would silently reorder every tool call in
+// every record; the projection must serialize exactly as []llm.ToolCall did
+// before extra_content existed, and append extra_content only when present.
+func TestToolCallsForJSON_KeepsFieldOrder(t *testing.T) {
+	tc := llm.ToolCall{ID: "call_1", Type: "function", Function: llm.FunctionCall{Name: "file_read", Arguments: "{}"}}
+
+	// ExtraContent is json:"-", so marshaling ToolCall is the pre-change format.
+	want, err := json.Marshal([]llm.ToolCall{tc})
+	if err != nil {
+		t.Fatalf("marshal reference: %v", err)
+	}
+	got, err := json.Marshal(toolCallsForJSON([]llm.ToolCall{tc}))
+	if err != nil {
+		t.Fatalf("marshal projection: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("tool call without extra_content changed on the wire:\n got  %s\n want %s", got, want)
+	}
+
+	tc.ExtraContent = json.RawMessage(`{"google":{"thought_signature":"sig"}}`)
+	got, err = json.Marshal(toolCallsForJSON([]llm.ToolCall{tc}))
+	if err != nil {
+		t.Fatalf("marshal projection with extra_content: %v", err)
+	}
+	const wantWith = `[{"id":"call_1","type":"function","function":{"name":"file_read","arguments":"{}"},"extra_content":{"google":{"thought_signature":"sig"}}}]`
+	if string(got) != wantWith {
+		t.Errorf("extra_content not appended after the existing fields:\n got  %s\n want %s", got, wantWith)
+	}
+}

@@ -419,11 +419,11 @@ func copyToolCalls(tcs []llm.ToolCall) []llm.ToolCall {
 // copyMessagesForJSON produces a JSON-friendly slice for persistence.
 func copyMessagesForJSON(msgs []llm.Message) any {
 	type msg struct {
-		Role          string           `json:"role"`
-		Content       any              `json:"content"`
-		ToolCallID    string           `json:"tool_call_id,omitempty"`
-		ToolCalls     []map[string]any `json:"tool_calls,omitempty"`
-		NativePayload any              `json:"native_payload,omitempty"`
+		Role          string         `json:"role"`
+		Content       any            `json:"content"`
+		ToolCallID    string         `json:"tool_call_id,omitempty"`
+		ToolCalls     []toolCallJSON `json:"tool_calls,omitempty"`
+		NativePayload any            `json:"native_payload,omitempty"`
 	}
 	out := make([]msg, 0, len(msgs))
 	for _, m := range msgs {
@@ -438,26 +438,25 @@ func copyMessagesForJSON(msgs []llm.Message) any {
 	return out
 }
 
-// toolCallsForJSON projects tool calls for persistence. ExtraContent is
-// json:"-", so the opaque provider metadata is carried deliberately here (#1357).
-func toolCallsForJSON(tcs []llm.ToolCall) []map[string]any {
+// toolCallJSON is the persisted shape of a tool call. A struct rather than a
+// map, because a map sorts its keys: this keeps each record byte-identical to
+// what []llm.ToolCall produced before, with extra_content appended only when
+// present. ExtraContent is json:"-" on ToolCall, so it is carried here (#1357).
+type toolCallJSON struct {
+	ID           string           `json:"id"`
+	Type         string           `json:"type"`
+	Function     llm.FunctionCall `json:"function"`
+	ExtraContent json.RawMessage  `json:"extra_content,omitempty"`
+}
+
+// toolCallsForJSON projects tool calls for persistence.
+func toolCallsForJSON(tcs []llm.ToolCall) []toolCallJSON {
 	if len(tcs) == 0 {
 		return nil
 	}
-	out := make([]map[string]any, 0, len(tcs))
+	out := make([]toolCallJSON, 0, len(tcs))
 	for _, tc := range tcs {
-		entry := map[string]any{
-			"id":   tc.ID,
-			"type": tc.Type,
-			"function": map[string]any{
-				"name":      tc.Function.Name,
-				"arguments": tc.Function.Arguments,
-			},
-		}
-		if len(tc.ExtraContent) > 0 {
-			entry["extra_content"] = tc.ExtraContent
-		}
-		out = append(out, entry)
+		out = append(out, toolCallJSON{ID: tc.ID, Type: tc.Type, Function: tc.Function, ExtraContent: tc.ExtraContent})
 	}
 	return out
 }
