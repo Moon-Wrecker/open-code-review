@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	openai "github.com/openai/openai-go/v3"
 )
@@ -241,5 +242,20 @@ func TestOpenAIResponsesClient_SurfacesArrayWrappedErrorBody(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "responses request rejected by gateway") {
 		t.Fatalf("Responses API did not surface the array-wrapped body: %v", err)
+	}
+}
+
+// TestLimitErrorBodyForLog_DropsRuneSplitByTheCap guards the cut at the 64 KiB
+// display bound: a multi-byte character split by the cap is dropped rather than
+// turned into a replacement character.
+func TestLimitErrorBodyForLog_DropsRuneSplitByTheCap(t *testing.T) {
+	// The cap falls after the first byte of this 3-byte character.
+	body := strings.Repeat("x", maxErrorBodyBytes-1) + "\xe2\x82\xac"
+	got := limitErrorBodyForLog([]byte(body))
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Fatalf("the split character became a replacement character: ...%q", got[len(got)-24:])
+	}
+	if !strings.HasSuffix(got, "x... (truncated)") {
+		t.Fatalf("want the partial character dropped before the truncation marker, got ...%q", got[len(got)-24:])
 	}
 }

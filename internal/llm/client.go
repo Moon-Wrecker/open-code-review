@@ -961,7 +961,7 @@ func limitErrorBodyForLog(raw []byte) string {
 		raw = raw[:maxErrorBodyBytes]
 		suffix = "... (truncated)"
 	}
-	trimmed := strings.ToValidUTF8(string(raw), "�")
+	trimmed := strings.ToValidUTF8(string(raw), "")
 	return strings.Map(func(r rune) rune {
 		// unicode.IsControl covers C1 (U+0080-U+009F) as well as C0, so a body
 		// cannot reach the terminal through the bare CSI or DCS forms either.
