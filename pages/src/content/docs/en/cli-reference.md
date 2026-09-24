@@ -81,6 +81,8 @@ ocr review --commit HEAD | gh issue comment 123 --body-file -
 | `ocr session show <id>` | `ocr sessions show <id>` | Inspect one session and its per-file checkpoints. |
 | `ocr session comments <id>` | `ocr sessions comments <id>` | Print the review comments recorded in one session. |
 | `ocr session compare <before> <after>` | `ocr session diff <before> <after>` | Compare two sessions' findings: new, persisting, resolved, not reviewed. |
+| `ocr session export [id]` | — | Export one session as a self-contained HTML file. |
+| `ocr session rm <id>` | `ocr session delete <id>`, `ocr session remove <id>` | Delete one saved review session. |
 | `ocr viewer` | — | Launch the local web UI for past review sessions (`localhost:5483`). |
 | `ocr version` | — | Print version, commit, platform, build date, and GitHub URL. |
 
@@ -458,7 +460,8 @@ session never looked at, so they are not counted as resolved).
 
 Findings are matched on path, category and the offending snippet, not on line
 numbers, so a finding that only moved down the file still counts as
-persisting.
+persisting. When the after session's manifest records a file rename, the old
+path is mapped to the new path before matching.
 
 ```bash
 ocr session compare <before-session-id> <after-session-id>
@@ -474,6 +477,56 @@ output stays pipeable.
 |---|---|---|
 | `--repo <path>` | current dir | Repository whose sessions should be compared. |
 | `--json` | `false` | Emit the comparison as JSON (`new`, `persisting`, `resolved`, `not_reviewed`). |
+
+### `ocr session export`
+
+Renders one session as a single self-contained HTML file. The viewer's
+stylesheet and script are inlined, so the artifact opens over `file://` with no
+network access at all and CI can archive a review as a build artifact.
+
+```bash
+ocr session export -o review.html
+ocr session export 20250601-100000-abc123 -o review.html
+```
+
+With no session id the newest session for the repository is exported. That is
+the default because a *successful* `ocr review` never prints its session id.
+Without `-o` the HTML goes to stdout.
+
+The exported page embeds the reviewed source excerpts the session recorded, so
+treat the file with the same care as the repository itself before publishing it.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--repo <path>` | current dir | Repository whose session should be exported. |
+| `--output <path>`, `-o` | stdout | Write the HTML to a file instead of stdout. |
+
+### `ocr session rm`
+
+Deletes one persisted session from `~/.opencodereview/sessions/`.
+
+```bash
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b --yes
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b --repo ~/work/my-project
+```
+
+The id is enough on its own, so the command runs from any directory. If the same
+id is saved for more than one repository, the candidates are listed and nothing
+is deleted; pass `--repo` to pick one.
+
+The session's repository, branch, start time, file count and comment count are
+printed, and you are asked to confirm. **A non-interactive stdin answers no**, so
+a pipeline or a CI job must pass `--yes` (`-y`) to skip the prompt.
+
+A session whose metadata cannot be parsed is still deletable; one that cannot be
+read at all is reported instead. With `--repo`, a session that records a
+different repository, or none, is refused: delete it by id alone.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--repo <path>` | every repository | Only look for the session under this repository. |
+| `--yes`, `-y` | `false` | Skip the confirmation prompt. |
 
 ## `ocr rules`
 

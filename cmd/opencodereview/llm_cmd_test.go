@@ -4,6 +4,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -190,5 +191,26 @@ func TestSecondTurnPairsEveryToolCall(t *testing.T) {
 	// A repeated call to the offered tool is still that tool, not an unknown one.
 	if got := toolResultMessages(resp, spec)[2].ExtractText(); got != "ocr_selftest ok" {
 		t.Errorf("repeated self-test call got %q, want the configured result", got)
+	}
+}
+
+func TestLLMTestCommand_UsesDefaultConfigPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	original := runLLMTestPath
+	t.Cleanup(func() { runLLMTestPath = original })
+	var gotPath string
+	runLLMTestPath = func(configPath string) error {
+		gotPath = configPath
+		return nil
+	}
+
+	if err := llmTestCmd.RunE(llmTestCmd, nil); err != nil {
+		t.Fatalf("llm test: %v", err)
+	}
+	if want := filepath.Join(home, ".opencodereview", "config.json"); gotPath != want {
+		t.Fatalf("config path = %q, want %q", gotPath, want)
 	}
 }

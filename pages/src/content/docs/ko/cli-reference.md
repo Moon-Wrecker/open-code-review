@@ -80,6 +80,8 @@ ocr review --commit HEAD | gh issue comment 123 --body-file -
 | `ocr session show <id>` | `ocr sessions show <id>` | 세션 하나와 파일별 체크포인트를 살펴봅니다. |
 | `ocr session comments <id>` | `ocr sessions comments <id>` | 세션에 기록된 리뷰 코멘트를 출력합니다. |
 | `ocr session compare <before> <after>` | `ocr session diff <before> <after>` | 두 세션의 지적을 비교합니다: 새로 생긴 것, 남아 있는 것, 해결된 것, 리뷰하지 않은 것. |
+| `ocr session export [id]` | — | 세션 하나를 단일 HTML 파일로 내보냅니다. |
+| `ocr session rm <id>` | `ocr session delete <id>`, `ocr session remove <id>` | 저장된 리뷰 세션 하나를 삭제합니다. |
 | `ocr viewer` | — | 지난 리뷰 세션을 볼 수 있는 로컬 웹 UI를 띄웁니다(`localhost:5483`). |
 | `ocr version` | — | 버전, 커밋, 플랫폼, 빌드 날짜, GitHub URL을 출력합니다. |
 
@@ -448,7 +450,8 @@ ocr session comments --severity critical,high --category bug,security <session-i
 있지만 뒤 세션이 아예 보지 않은 파일이라 해결된 것으로 세지 않음)입니다.
 
 지적은 라인 번호가 아니라 경로와 분류, 문제가 된 코드 조각으로 대조합니다. 그래서
-파일 안에서 위치만 밀린 지적은 여전히 남아 있는 것으로 잡힙니다.
+파일 안에서 위치만 밀린 지적은 여전히 남아 있는 것으로 잡힙니다. after 세션의 실행
+매니페스트에 파일 이름 변경이 기록되어 있으면 대조 전에 이전 경로를 새 경로로 바꿉니다.
 
 ```bash
 ocr session compare <before-session-id> <after-session-id>
@@ -463,6 +466,56 @@ ocr session compare --json <before-session-id> <after-session-id>
 |---|---|---|
 | `--repo <path>` | 현재 디렉터리 | 비교할 세션이 속한 저장소. |
 | `--json` | `false` | 비교 결과를 JSON으로 출력합니다(`new`, `persisting`, `resolved`, `not_reviewed`). |
+
+### `ocr session export` {#ocr-session-export}
+
+세션 하나를 단일 HTML 파일로 렌더링합니다. 뷰어의 스타일시트와 스크립트가
+인라인으로 들어가므로, 결과물은 네트워크 접근 없이 `file://`로 열리며 CI가
+리뷰 결과를 빌드 아티팩트로 보관할 수 있습니다.
+
+```bash
+ocr session export -o review.html
+ocr session export 20250601-100000-abc123 -o review.html
+```
+
+세션 id를 주지 않으면 해당 저장소의 가장 최근 세션을 내보냅니다. 성공한
+`ocr review`는 세션 id를 출력하지 않기 때문에 이것이 기본값입니다. `-o`를 주지
+않으면 HTML은 표준 출력으로 나갑니다.
+
+내보낸 페이지에는 세션이 기록한 리뷰 대상 소스 발췌가 들어 있습니다. 공개하기
+전에 저장소 자체와 같은 수준으로 주의해서 다루세요.
+
+| 플래그 | 기본값 | 설명 |
+|---|---|---|
+| `--repo <path>` | 현재 디렉터리 | 내보낼 세션이 속한 저장소. |
+| `--output <path>`, `-o` | 표준 출력 | HTML을 표준 출력 대신 파일로 씁니다. |
+
+### `ocr session rm` {#ocr-session-rm}
+
+`~/.opencodereview/sessions/`에 저장된 세션 하나를 삭제합니다.
+
+```bash
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b --yes
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b --repo ~/work/my-project
+```
+
+id만으로 충분하므로 어느 디렉터리에서든 실행할 수 있습니다. 같은 id가 여러
+저장소에 저장되어 있으면 후보를 보여주고 아무것도 삭제하지 않습니다. `--repo`로
+하나를 지정하세요.
+
+세션의 저장소, 브랜치, 시작 시각, 파일 수, 댓글 수를 출력하고 확인을 요청합니다.
+**비대화형 stdin은 "아니오"로 처리되므로**, 파이프라인이나 CI 작업에서 프롬프트를
+건너뛰려면 `--yes`(`-y`)를 전달해야 합니다.
+
+메타데이터를 해석할 수 없는 세션도 삭제할 수 있습니다. 아예 읽을 수 없는 경우에는
+삭제하지 않고 오류를 보고합니다. `--repo`를 지정하면 다른 저장소를 기록했거나
+저장소를 기록하지 않은 세션은 거부됩니다. 그때는 id만으로 삭제하세요.
+
+| 플래그 | 기본값 | 설명 |
+|---|---|---|
+| `--repo <path>` | 모든 저장소 | 이 저장소 아래에서만 세션을 찾습니다. |
+| `--yes`, `-y` | `false` | 확인 프롬프트를 건너뜁니다. |
 
 ## `ocr rules` {#ocr-rules}
 

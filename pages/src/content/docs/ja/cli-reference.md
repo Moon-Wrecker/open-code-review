@@ -79,6 +79,8 @@ ocr review --commit HEAD | gh issue comment 123 --body-file -
 | `ocr session show <id>` | `ocr sessions show <id>` | 1つのセッションとファイル単位のチェックポイントを表示します。 |
 | `ocr session comments <id>` | `ocr sessions comments <id>` | 1つのセッションに記録されたレビューコメントを表示します。 |
 | `ocr session compare <before> <after>` | `ocr session diff <before> <after>` | 2つのセッションの指摘を比較します：新規・継続・解決済み・未レビュー。 |
+| `ocr session export [id]` | — | 1つのセッションを自己完結型の HTML ファイルとしてエクスポートします。 |
+| `ocr session rm <id>` | `ocr session delete <id>`, `ocr session remove <id>` | 保存済みのレビューセッションを1つ削除します。 |
 | `ocr viewer` | — | 過去のレビューセッション用のローカル Web UI を起動します（`localhost:5483`）。 |
 | `ocr version` | — | バージョン、commit、プラットフォーム、ビルド日、GitHub URL を出力します。 |
 
@@ -432,7 +434,8 @@ ocr session comments --severity critical,high --category bug,security <session-i
 レビューしていないため解決済みとは数えないもの）。
 
 照合はパス・カテゴリ・該当コード片で行い、行番号は使いません。そのため行が
-ずれただけの指摘は persisting のままになります。
+ずれただけの指摘は persisting のままになります。after セッションのランマニフェストに
+ファイル名変更が記録されている場合、照合前に旧パスを新パスへ対応付けます。
 
 ```bash
 ocr session compare <before-session-id> <after-session-id>
@@ -448,6 +451,58 @@ ocr session compare --json <before-session-id> <after-session-id>
 |---|---|---|
 | `--repo <path>` | カレントディレクトリ | 比較するセッションが属するリポジトリ。 |
 | `--json` | `false` | 比較結果を JSON で出力します（`new`、`persisting`、`resolved`、`not_reviewed`）。 |
+
+### `ocr session export`
+
+1つのセッションを自己完結型の HTML ファイル 1 つとしてレンダリングします。
+ビューアのスタイルシートとスクリプトはインライン化されるため、生成された
+ファイルはネットワークアクセスなしで `file://` から開け、CI がレビュー結果を
+ビルド成果物として保存できます。
+
+```bash
+ocr session export -o review.html
+ocr session export 20250601-100000-abc123 -o review.html
+```
+
+セッション id を指定しない場合は、そのリポジトリの最新セッションをエクスポートします。
+成功した `ocr review` はセッション id を出力しないため、これが既定の動作です。
+`-o` を指定しない場合、HTML は標準出力に書き出されます。
+
+エクスポートされたページにはセッションが記録したレビュー対象のソース抜粋が
+含まれます。公開する前に、リポジトリ自体と同じように慎重に取り扱ってください。
+
+| フラグ | デフォルト | 説明 |
+|---|---|---|
+| `--repo <path>` | カレントディレクトリ | エクスポートするセッションが属するリポジトリ。 |
+| `--output <path>`、`-o` | 標準出力 | HTML を標準出力ではなくファイルに書き出します。 |
+
+### `ocr session rm`
+
+`~/.opencodereview/sessions/` から保存済みのセッションを1つ削除します。
+
+```bash
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b --yes
+ocr session rm 9f2c1b4a-7e35-4d61-b2f0-6c8a41d9e72b --repo ~/work/my-project
+```
+
+id だけで十分なので、どのディレクトリからでも実行できます。同じ id が複数の
+リポジトリに保存されている場合は、候補を一覧表示して何も削除しません。`--repo`
+で1つを指定してください。
+
+セッションのリポジトリ、ブランチ、開始時刻、ファイル数、コメント数を表示し、
+確認を求めます。**非対話的な stdin は「いいえ」として扱われる**ため、パイプラインや
+CI ジョブで確認を省略するには `--yes`（`-y`）を渡してください。
+
+メタデータを解析できないセッションも削除できます。まったく読み取れない場合は、
+削除せずにエラーを報告します。`--repo` を指定した場合、別のリポジトリを記録している
+セッションや、リポジトリを記録していないセッションは拒否されます。その場合は id
+だけで削除してください。
+
+| フラグ | デフォルト | 説明 |
+|---|---|---|
+| `--repo <path>` | すべてのリポジトリ | このリポジトリの下だけでセッションを探します。 |
+| `--yes`、`-y` | `false` | 確認プロンプトを省略します。 |
 
 ## `ocr rules`
 
