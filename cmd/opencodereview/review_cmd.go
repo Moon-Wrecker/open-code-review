@@ -51,6 +51,8 @@ type reviewOptions struct {
 	effort                string
 	noFilter              bool
 	preview               bool
+	fetch                 bool
+	remote                string
 }
 
 var reviewOpts reviewOptions
@@ -140,6 +142,11 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	}
 	applyCLIExcludes(cc, splitPaths(opts.excludes))
 
+	fetched, err := fetchReviewBase(ctx, cc, &opts)
+	if err != nil {
+		return err
+	}
+
 	// Security (#112): reject ref-option injection before any git invocation.
 	if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
 		return err
@@ -152,7 +159,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	opts.background = bg
 
 	if opts.preview {
-		return runPreviewContext(ctx, cc, opts, out)
+		return runPreviewContext(ctx, cc, opts, out, fetched)
 	}
 
 	resumeState, err := loadReviewResumeState(cc.RepoDir, opts)
@@ -182,7 +189,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	// Strictly before agent.New, so a rejected resume persists nothing. The sealed
 	// input it returns pins the run to the very commits this check passed on, so
 	// the decision cannot be undone by a ref moving afterwards.
-	sealed, err := validateResumeIdentity(ctx, cc, opts, rt, resumeState)
+	sealed, err := validateResumeIdentity(ctx, cc, opts, rt, resumeState, fetched)
 	if err != nil {
 		return err
 	}
@@ -192,7 +199,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 		Model:    rt.Model,
 	}
 
-	var sealedInput *diff.InputResolution
+	sealedInput := fetched
 	if sealed != nil {
 		sealedInput = &sealed.Resolution
 	}
@@ -392,20 +399,24 @@ func loadReviewResumeState(repoDir string, opts reviewOptions) (*session.ResumeS
 // command line: both default to the empty string and nothing else can set them,
 // so a provider that changed via config file or environment stays implicit —
 // which is the transition this check exists to reject.
-func validateResumeIdentity(ctx context.Context, cc *commonContext, opts reviewOptions, rt *llmRuntime, state *session.ResumeState) (*agent.SealedInput, error) {
+//
+// fetched carries the endpoints --fetch already froze, so admission compares the
+// commits that were fetched rather than whatever the refs name by now.
+func validateResumeIdentity(ctx context.Context, cc *commonContext, opts reviewOptions, rt *llmRuntime, state *session.ResumeState, fetched *diff.InputResolution) (*agent.SealedInput, error) {
 	if state == nil {
 		return nil, nil
 	}
 	sealed, err := agent.ResolveIdentity(ctx, agent.Args{
-		RepoDir:    cc.RepoDir,
-		From:       opts.from,
-		To:         opts.to,
-		Commit:     opts.commit,
-		ReviewMode: reviewModeFromOptions(opts),
-		Template:   *cc.Template,
-		SystemRule: cc.Resolver,
-		FileFilter: cc.FileFilter,
-		GitRunner:  cc.GitRunner,
+		RepoDir:     cc.RepoDir,
+		From:        opts.from,
+		To:          opts.to,
+		Commit:      opts.commit,
+		ReviewMode:  reviewModeFromOptions(opts),
+		Template:    *cc.Template,
+		SystemRule:  cc.Resolver,
+		FileFilter:  cc.FileFilter,
+		GitRunner:   cc.GitRunner,
+		SealedInput: fetched,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve current input identity: %w", err)
@@ -501,7 +512,7 @@ func validateReviewRefs(repoDir string, opts reviewOptions) error {
 	return nil
 }
 
-func runPreviewContext(ctx context.Context, cc *commonContext, opts reviewOptions, out io.Writer) error {
+func runPreviewContext(ctx context.Context, cc *commonContext, opts reviewOptions, out io.Writer, sealed *diff.InputResolution) error {
 	maxTokens, err := previewMaxTokens(cc.Template.MaxTokens, opts.maxTokens)
 	if err != nil {
 		return err
@@ -512,13 +523,14 @@ func runPreviewContext(ctx context.Context, cc *commonContext, opts reviewOption
 	tpl.MaxTokens = maxTokens
 
 	preview, err := agent.Preview(ctx, agent.Args{
-		RepoDir:    cc.RepoDir,
-		From:       opts.from,
-		To:         opts.to,
-		Commit:     opts.commit,
-		Template:   tpl,
-		FileFilter: cc.FileFilter,
-		GitRunner:  cc.GitRunner,
+		RepoDir:     cc.RepoDir,
+		From:        opts.from,
+		To:          opts.to,
+		Commit:      opts.commit,
+		Template:    tpl,
+		FileFilter:  cc.FileFilter,
+		GitRunner:   cc.GitRunner,
+		SealedInput: sealed,
 	})
 	if err != nil {
 		return fmt.Errorf("preview failed: %w", err)
