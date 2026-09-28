@@ -135,6 +135,7 @@ func TestParseFetchTarget(t *testing.T) {
 		{name: "option-like value", from: "-x", wantErr: "must not start with '-'"},
 		{name: "HEAD", from: "HEAD", wantErr: "name a branch"},
 		{name: "remote HEAD", from: "origin/HEAD", wantErr: "name a branch"},
+		{name: "fully qualified ref", from: "refs/remotes/origin/main", wantErr: "short branch name"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -510,5 +511,25 @@ func TestFetchReviewBase_ExplicitRemoteReachesBranchNamedLikeARemote(t *testing.
 	}
 	if got := revParse(t, fx.user, "refs/remotes/origin/release/1.2"); got != fx.remoteTip {
 		t.Errorf("origin/release/1.2 = %s, want %s", got, fx.remoteTip)
+	}
+}
+
+// Once --fetch has frozen both endpoints, the short "origin/main" spelling is
+// only a label. A tag of that name pointing at a tree must not fail the run by
+// being re-resolved in place of the fetched commit.
+func TestReviewFetch_ShadowingTagDoesNotFailTheRun(t *testing.T) {
+	fx := newFetchFixture(t)
+	gitIn(t, fx.user, "tag", "origin/main", "HEAD^{tree}")
+
+	opts := fx.options("main")
+	opts.preview = true
+	opts.outputFormat = "json"
+	out := captureStdout(t, func() {
+		if err := executeReviewContext(context.Background(), opts); err != nil {
+			t.Fatalf("preview: %v", err)
+		}
+	})
+	if got := previewPaths(decodeSinglePreviewJSON(t, out)); !slices.Equal(got, []string{"feature.go"}) {
+		t.Errorf("preview paths = %v, want only feature.go", got)
 	}
 }

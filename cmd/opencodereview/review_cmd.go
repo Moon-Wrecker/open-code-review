@@ -151,9 +151,13 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	}
 
 	// Security: reject ref-option injection before these refs reach git.
-	// fetchReviewBase runs first and applies the same guard to the refs it uses.
-	if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
-		return err
+	// fetchReviewBase has already validated both endpoints and frozen them to
+	// commits; re-resolving its short "<remote>/<branch>" label could pick up a
+	// local ref of the same name instead of the one it fetched.
+	if fetched == nil {
+		if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
+			return err
+		}
 	}
 
 	bg, err := resolveBackground(cc.RepoDir, opts.background, opts.backgroundFile, opts.commit)

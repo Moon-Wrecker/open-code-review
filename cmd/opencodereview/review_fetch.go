@@ -38,6 +38,9 @@ func parseFetchTarget(from, remote string, remotes []string) (fetchTarget, error
 	if strings.HasPrefix(from, "-") {
 		return fetchTarget{}, fmt.Errorf("--from value %q is not a valid git ref: refs must not start with '-'", from)
 	}
+	if strings.HasPrefix(from, "refs/") {
+		return fetchTarget{}, fmt.Errorf("--fetch needs --from to be a short branch name such as main or origin/main, got %q", from)
+	}
 	var target fetchTarget
 	if remote != "" {
 		target = fetchTarget{remote: remote, branch: strings.TrimPrefix(from, remote+"/")}
