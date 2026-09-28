@@ -126,7 +126,8 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 	// --refmap= keeps configured fetch refspecs from writing refs beyond dest,
 	// and an empty fetch.bundleURI keeps bundle downloads out of refs/bundles/;
 	// the other switches keep tags, submodules, FETCH_HEAD and background
-	// maintenance out of it. --porcelain --verbose reports what dest now holds.
+	// maintenance out of it. --porcelain --verbose reports what dest now holds;
+	// --porcelain needs Git 2.41, the minimum OCR supports.
 	out, stderr, err := cc.GitRunner.RunSplit(ctx, cc.RepoDir, "-c", "fetch.bundleURI=", "fetch",
 		"--porcelain", "--verbose", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
 		"--no-auto-maintenance", "--refmap=", "--end-of-options", target.remote, "+refs/heads/"+target.branch+":"+dest)
