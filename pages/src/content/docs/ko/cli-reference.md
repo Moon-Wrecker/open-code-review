@@ -112,7 +112,7 @@ ocr r      [flags]   (alias)
 | `--from <ref>` | — | — | diff를 시작할 원본 ref(예: `main`). |
 | `--to <ref>` | — | — | diff가 끝나는 대상 ref(예: `feature-branch`). 지정하면 OCR이 `merge-base(from, to)..to`를 계산합니다. |
 | `--fetch` | — | `false` | 범위를 계산하기 전에 `--remote`에서 `--from` 브랜치를 fetch하고, 로컬 브랜치 대신 fetch한 원격 추적 브랜치를 기준으로 리뷰합니다(`--from origin/main`은 `origin`의 `main` 브랜치를 뜻합니다). `--to`는 fetch하지 않으므로 아직 push하지 않은 커밋도 리뷰에 남습니다. 갱신되는 것은 그 원격 추적 브랜치뿐이고, fetch가 실패하면 LLM을 호출하기 전에 리뷰를 멈춥니다. `--from`/`--to`가 필요합니다. |
-| `--remote <name>` | — | `origin` | `--fetch`가 가져올 원격. |
+| `--remote <name>` | — | `origin` | `--fetch`가 가져올 원격. 지정하면 `--from`이 다른 원격 이름으로 시작하더라도 항상 이 원격의 브랜치로 해석합니다(앞의 `<name>/`는 생략 가능). |
 | `--commit <sha>` | `-c` | — | 리뷰할 단일 커밋(부모 커밋과의 diff). |
 | `--preview` | `-p` | `false` | 필터 파이프라인만 돌리고 LLM은 호출하지 않습니다. 파일 목록과 제외 사유를 출력합니다. `--format json`은 지원하지만 `--format sarif`는 지원하지 않습니다(미리 보기에는 내보낼 완료된 지적이 없습니다). |
 | `--no-filter` | — | `false` | 리뷰 코멘트를 모두 남기고 서브태스크 단위 `REVIEW_FILTER_TASK` LLM 후처리 호출을 건너뜁니다. 서브태스크는 파일 하나 또는 관련된 파일 묶음을 리뷰합니다. |

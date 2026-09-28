@@ -108,7 +108,7 @@ unstaged + untracked 变更。
 | `--from <ref>` | — | — | diff 起始 ref（如 `main`）。 |
 | `--to <ref>` | — | — | diff 结束 ref（如 `feature-branch`）。设置后 OCR 计算 `merge-base(from, to)..to`。 |
 | `--fetch` | — | `false` | 解析区间之前，先从 `--remote` 拉取 `--from` 分支，并以拉取到的远程跟踪分支（而非本地分支）为基准评审（`--from origin/main` 表示 `origin` 上的 `main` 分支）。`--to` 从不拉取，未推送的提交仍在评审范围内。只会更新该远程跟踪分支；拉取失败时，评审在任何 LLM 调用之前停止。需要 `--from`/`--to`。 |
-| `--remote <name>` | — | `origin` | `--fetch` 拉取所用的远程。 |
+| `--remote <name>` | — | `origin` | `--fetch` 拉取所用的远程。设置后，`--from` 始终表示该远程上的分支（前缀 `<name>/` 可省略），即使它以另一个远程的名称开头。 |
 | `--commit <sha>` | `-c` | — | 评审单个 commit（相对其父）。 |
 | `--preview` | `-p` | `false` | 运行过滤流水线但跳过 LLM。打印文件列表与排除原因。支持 `--format json`；不支持 `--format sarif`（预览没有已完成的发现可供输出）。 |
 | `--no-filter` | — | `false` | 保留所有评审评论，并跳过每个子任务的 `REVIEW_FILTER_TASK` LLM 后处理调用。子任务评审单个文件或一组相关文件。 |

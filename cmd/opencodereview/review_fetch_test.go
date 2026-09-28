@@ -19,7 +19,7 @@ import (
 	"github.com/alibaba/open-code-review/internal/stdout"
 )
 
-// fetchFixture reproduces #1585: the clone's local main and origin/main both
+// fetchFixture reproduces the stale-base incident: the clone's local main and origin/main both
 // trail the remote, and its feature branch was cut from the remote main of that
 // time. Reviewing feature against the stale local main drags in shared.go, which
 // is already on the remote base.
@@ -114,7 +114,7 @@ func fileURL(path string) string {
 }
 
 func TestParseFetchTarget(t *testing.T) {
-	remotes := []string{"origin", "team", "team/up", "upstream"}
+	remotes := []string{"origin", "release", "team", "team/up", "upstream"}
 	tests := []struct {
 		name    string
 		from    string
@@ -124,11 +124,13 @@ func TestParseFetchTarget(t *testing.T) {
 	}{
 		{name: "bare branch defaults to origin", from: "main", want: fetchTarget{remote: "origin", branch: "main"}},
 		{name: "remote-qualified branch", from: "origin/main", want: fetchTarget{remote: "origin", branch: "main"}},
-		{name: "slash inside a branch name", from: "release/1.2", want: fetchTarget{remote: "origin", branch: "release/1.2"}},
+		{name: "slash inside a branch name", from: "feature/login", want: fetchTarget{remote: "origin", branch: "feature/login"}},
 		{name: "longest remote prefix wins", from: "team/up/main", want: fetchTarget{remote: "team/up", branch: "main"}},
 		{name: "explicit remote", from: "main", remote: "upstream", want: fetchTarget{remote: "upstream", branch: "main"}},
 		{name: "explicit remote agreeing with the prefix", from: "upstream/main", remote: "upstream", want: fetchTarget{remote: "upstream", branch: "main"}},
-		{name: "explicit remote contradicting the prefix", from: "origin/main", remote: "upstream", wantErr: `names remote "origin"`},
+		{name: "explicit remote takes a remote-like prefix literally", from: "origin/main", remote: "upstream", want: fetchTarget{remote: "upstream", branch: "origin/main"}},
+		{name: "branch namespace named like a remote, no --remote", from: "release/1.2", want: fetchTarget{remote: "release", branch: "1.2"}},
+		{name: "branch namespace named like a remote, explicit --remote", from: "release/1.2", remote: "origin", want: fetchTarget{remote: "origin", branch: "release/1.2"}},
 		{name: "unknown remote", from: "main", remote: "nosuch", wantErr: `"nosuch" is not a configured git remote`},
 		{name: "option-like value", from: "-x", wantErr: "must not start with '-'"},
 		{name: "HEAD", from: "HEAD", wantErr: "name a branch"},
@@ -183,7 +185,7 @@ func TestReviewFlags_FetchValidation(t *testing.T) {
 	}
 }
 
-// The incident in #1585, end to end through the command: the same range widens
+// The stale-base incident, end to end through the command: the same range widens
 // with the stale local base and narrows to the branch's own change with --fetch.
 func TestReviewFetch_PreviewReviewsAgainstFetchedBase(t *testing.T) {
 	fx := newFetchFixture(t)
@@ -486,5 +488,27 @@ func TestReviewE2E_FetchRecordsTheFetchedBase(t *testing.T) {
 	}
 	if !slices.Equal(selected, []string{"feature.go"}) {
 		t.Errorf("selected = %v, want only feature.go", selected)
+	}
+}
+
+// A branch namespace can share its name with another configured remote. An
+// explicit --remote must reach that branch rather than be overridden by the
+// remote-looking prefix, which would silently review against another base.
+func TestFetchReviewBase_ExplicitRemoteReachesBranchNamedLikeARemote(t *testing.T) {
+	fx := newFetchFixture(t)
+	gitIn(t, fx.publisher, "push", "origin", "main:release/1.2")
+	gitIn(t, fx.publisher, "push", "origin", fx.staleMain+":refs/heads/1.2")
+	gitIn(t, fx.user, "remote", "add", "release", fx.remote)
+
+	opts := fx.options("release/1.2")
+	opts.remote = "origin"
+	if _, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts); err != nil {
+		t.Fatalf("fetchReviewBase: %v", err)
+	}
+	if opts.from != "origin/release/1.2" {
+		t.Errorf("opts.from = %q, want origin/release/1.2", opts.from)
+	}
+	if got := revParse(t, fx.user, "refs/remotes/origin/release/1.2"); got != fx.remoteTip {
+		t.Errorf("origin/release/1.2 = %s, want %s", got, fx.remoteTip)
 	}
 }

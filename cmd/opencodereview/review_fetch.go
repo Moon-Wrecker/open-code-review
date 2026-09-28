@@ -27,30 +27,31 @@ func (t fetchTarget) trackingRef() string {
 	return "refs/remotes/" + t.remote + "/" + t.branch
 }
 
-// parseFetchTarget reads --from as a branch on a configured remote. A leading
-// "<remote>/" selects that remote, matched against the longest configured name
-// because remote names may contain '/'; anything else is a branch on --remote,
-// or origin. A branch literally named "origin/topic" therefore cannot be
-// fetched from origin this way.
+// parseFetchTarget reads --from as a branch on a configured remote. An explicit
+// --remote is authoritative: --from is then a branch on it, minus an optional
+// "<remote>/" prefix naming that same remote, so every branch stays reachable
+// even when its namespace shares a name with another remote. Without --remote,
+// a leading "<remote>/" selects that remote, matched against the longest
+// configured name because remote names may contain '/'; anything else is a
+// branch on origin.
 func parseFetchTarget(from, remote string, remotes []string) (fetchTarget, error) {
 	if strings.HasPrefix(from, "-") {
 		return fetchTarget{}, fmt.Errorf("--from value %q is not a valid git ref: refs must not start with '-'", from)
 	}
-	target := fetchTarget{remote: remote, branch: from}
-	prefix := ""
-	for _, r := range remotes {
-		if len(r) > len(prefix) && strings.HasPrefix(from, r+"/") {
-			prefix = r
+	var target fetchTarget
+	if remote != "" {
+		target = fetchTarget{remote: remote, branch: strings.TrimPrefix(from, remote+"/")}
+	} else {
+		target = fetchTarget{remote: "origin", branch: from}
+		prefix := ""
+		for _, r := range remotes {
+			if len(r) > len(prefix) && strings.HasPrefix(from, r+"/") {
+				prefix = r
+			}
 		}
-	}
-	if prefix != "" {
-		if remote != "" && remote != prefix {
-			return fetchTarget{}, fmt.Errorf("--from %q names remote %q, but --remote is %q", from, prefix, remote)
+		if prefix != "" {
+			target = fetchTarget{remote: prefix, branch: strings.TrimPrefix(from, prefix+"/")}
 		}
-		target = fetchTarget{remote: prefix, branch: strings.TrimPrefix(from, prefix+"/")}
-	}
-	if target.remote == "" {
-		target.remote = "origin"
 	}
 	if !slices.Contains(remotes, target.remote) {
 		return fetchTarget{}, fmt.Errorf("--fetch: %q is not a configured git remote", target.remote)

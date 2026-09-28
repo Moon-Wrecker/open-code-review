@@ -113,7 +113,7 @@ staged + unstaged + untracked changes in the current directory's repo.
 | `--from <ref>` | — | — | Source ref to start the diff from (e.g., `main`). |
 | `--to <ref>` | — | — | Target ref to end the diff at (e.g., `feature-branch`). When set, OCR computes `merge-base(from, to)..to`. |
 | `--fetch` | — | `false` | Fetch the `--from` branch from `--remote` before resolving the range, and review against the fetched remote-tracking branch instead of the local one (`--from origin/main` means branch `main` on `origin`). `--to` is never fetched, so unpushed commits stay in the review. Only that remote-tracking branch is updated; if the fetch fails, the review stops before any LLM call. Requires `--from`/`--to`. |
-| `--remote <name>` | — | `origin` | Remote that `--fetch` reads from. |
+| `--remote <name>` | — | `origin` | Remote that `--fetch` reads from. When set, `--from` is always a branch on this remote (a leading `<name>/` is optional), even if it starts with another remote's name. |
 | `--commit <sha>` | `-c` | — | Single commit to review (vs its parent). |
 | `--preview` | `-p` | `false` | Run the filter pipeline but skip the LLM. Prints the file list and exclusion reasons. Honors `--format json`; `--format sarif` is not supported (a preview has no completed findings to emit). |
 | `--no-filter` | — | `false` | Keep all review comments and skip the per-subtask `REVIEW_FILTER_TASK` LLM post-processing call. A subtask reviews a single file or a bundle of related files. |

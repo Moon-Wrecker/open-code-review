@@ -150,7 +150,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 		return err
 	}
 
-	// Security (#112): reject ref-option injection before these refs reach git.
+	// Security: reject ref-option injection before these refs reach git.
 	// fetchReviewBase runs first and applies the same guard to the refs it uses.
 	if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
 		return err

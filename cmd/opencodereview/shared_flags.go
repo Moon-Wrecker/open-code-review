@@ -128,7 +128,7 @@ func validateReviewOptions(opts *reviewOptions) error {
 	if opts.remote != "" && !opts.fetch {
 		return fmt.Errorf("--remote requires --fetch")
 	}
-	if opts.fetch && (opts.from == "" || opts.to == "") {
+	if opts.fetch && opts.from == "" {
 		return fmt.Errorf("--fetch requires --from and --to")
 	}
 	if opts.preview && opts.resume != "" {
