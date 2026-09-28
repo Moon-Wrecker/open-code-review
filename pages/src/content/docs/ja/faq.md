@@ -366,7 +366,7 @@ sudo rm /usr/local/bin/ocr                              # binary install
 rm -rf ~/.opencodereview                                # all state
 ```
 
-OCR は `~/.opencodereview` の外には書き込みません（NPM がダウンロードするバイナリを除く）。
+OCR は `~/.opencodereview` の外には書き込みません（NPM がダウンロードするバイナリと、`ocr review --fetch` がリポジトリ内で更新するリモート追跡ブランチを除く）。
 したがってこのディレクトリを削除すれば、履歴、設定、ユーザーごとのルールが消去されます。
 
 ## 関連項目

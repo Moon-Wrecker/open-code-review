@@ -336,8 +336,8 @@ sudo rm /usr/local/bin/ocr                              # binary install
 rm -rf ~/.opencodereview                                # all state
 ```
 
-OCR 不在 `~/.opencodereview` 之外写入（NPM 下载二进制除外），因此删除该目录即可
-清除历史、配置与每用户规则。
+OCR 不在 `~/.opencodereview` 之外写入（NPM 下载的二进制，以及 `ocr review --fetch`
+在你的仓库中更新的远程跟踪分支除外），因此删除该目录即可清除历史、配置与每用户规则。
 
 ## 另见
 

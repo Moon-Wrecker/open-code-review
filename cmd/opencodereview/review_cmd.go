@@ -69,6 +69,9 @@ var reviewCmd = &cobra.Command{
   # Review a branch against its base (merge-base mode)
   ocr review --from master --to dev-ref
 
+  # Fetch the base branch from origin first, then review against it
+  ocr review --fetch --from main --to HEAD
+
   # Review a specific commit
   ocr review --commit abc123
   ocr review -c abc123
@@ -147,7 +150,8 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 		return err
 	}
 
-	// Security (#112): reject ref-option injection before any git invocation.
+	// Security (#112): reject ref-option injection before these refs reach git.
+	// fetchReviewBase runs first and applies the same guard to the refs it uses.
 	if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
 		return err
 	}

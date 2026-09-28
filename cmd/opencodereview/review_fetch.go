@@ -102,23 +102,33 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 	defer q.Restore()
 	w := stdout.Writer()
 	fmt.Fprintf(w, "[ocr] Fetching %s from %s\n", target.branch, target.remote)
-	// --refmap= keeps configured fetch refspecs from writing refs beyond dest;
+	// --refmap= keeps configured fetch refspecs from writing refs beyond dest,
+	// and an empty fetch.bundleURI keeps bundle downloads out of refs/bundles/;
 	// the other switches keep tags, submodules, FETCH_HEAD and background
-	// maintenance out of it.
-	_, stderr, err := cc.GitRunner.RunSplit(ctx, cc.RepoDir, "fetch", "--quiet", "--no-tags",
-		"--no-recurse-submodules", "--no-write-fetch-head", "--no-auto-maintenance", "--refmap=",
-		"--end-of-options", target.remote, "+refs/heads/"+target.branch+":"+dest)
+	// maintenance out of it. --porcelain --verbose reports what dest now holds.
+	out, stderr, err := cc.GitRunner.RunSplit(ctx, cc.RepoDir, "-c", "fetch.bundleURI=", "fetch",
+		"--porcelain", "--verbose", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
+		"--no-auto-maintenance", "--refmap=", "--end-of-options", target.remote, "+refs/heads/"+target.branch+":"+dest)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fetchFailure(target, stderr, err)
 	}
-	tip, err := cc.GitRunner.Output(ctx, cc.RepoDir, "rev-parse", "--verify", "--quiet", "--end-of-options", dest+"^{commit}")
-	if err != nil {
-		return nil, fmt.Errorf("--fetch: resolve %s: %w", dest, err)
+	// Git exits 0 when it refuses an update, e.g. one that would need new
+	// shallow roots; dest is then stale and must not be reviewed.
+	tip, ok := fetchedTip(out, dest)
+	if !ok {
+		msg := fmt.Sprintf("fetch %s from %s: git did not update %s", target.branch, target.remote, dest)
+		if diag := sanitizeTerminal(strings.TrimSpace(stderr)); diag != "" {
+			msg += ": " + diag
+		}
+		return nil, errors.New(msg)
 	}
 	base := target.remote + "/" + target.branch
 	sealed, err := agent.ResolveInput(ctx, agent.Args{
 		RepoDir:   cc.RepoDir,
-		From:      strings.TrimSpace(string(tip)),
+		From:      tip,
 		To:        opts.to,
 		GitRunner: cc.GitRunner,
 	})
@@ -126,32 +136,47 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, noMergeBaseError(ctx, cc, base, opts.to)
+		return nil, resolveRangeError(ctx, cc, base, opts.to, err)
 	}
 	opts.from = base
-	fmt.Fprintf(w, "[ocr] Resolved base: %s -> %s\n", base, shortSHA(strings.TrimSpace(string(tip))))
+	fmt.Fprintf(w, "[ocr] Resolved base: %s -> %s\n", base, shortSHA(tip))
 	fmt.Fprintf(w, "[ocr] Resolved target: %s -> %s\n", opts.to, shortSHA(sealed.ResolvedHead))
 	fmt.Fprintf(w, "[ocr] Merge base: %s\n", shortSHA(sealed.ResolvedBase))
 	return sealed, nil
 }
 
-func fetchFailure(t fetchTarget, stderr string, err error) error {
-	msg := sanitizeTerminal(strings.TrimSpace(stderr))
-	if msg == "" {
-		msg = err.Error()
+// fetchedTip returns the commit that `git fetch --porcelain --verbose` reports
+// for dest. Lines read "<flag> <old> <new> <ref>"; a refused update is flagged
+// '!' or left out entirely.
+func fetchedTip(porcelain, dest string) (string, bool) {
+	for _, line := range strings.Split(porcelain, "\n") {
+		if len(line) < 2 || !strings.ContainsRune(" +*=", rune(line[0])) {
+			continue
+		}
+		if f := strings.Fields(line[2:]); len(f) == 3 && f[2] == dest {
+			return f[1], true
+		}
 	}
-	if strings.Contains(msg, "couldn't find remote ref") {
-		msg += " (--fetch refreshes a branch; to review a tag or commit, drop --fetch)"
-	}
-	return fmt.Errorf("fetch %s from %s: %s", t.branch, t.remote, msg)
+	return "", false
 }
 
-func noMergeBaseError(ctx context.Context, cc *commonContext, base, to string) error {
-	msg := fmt.Sprintf("--fetch: no merge base between %s and %s", base, to)
-	if out, _ := cc.GitRunner.Output(ctx, cc.RepoDir, "rev-parse", "--is-shallow-repository"); strings.TrimSpace(string(out)) == "true" {
-		msg += "; this clone is shallow, so deepen it (git fetch --deepen=<n> or --unshallow) and retry"
+func fetchFailure(t fetchTarget, stderr string, err error) error {
+	diag := sanitizeTerminal(strings.TrimSpace(stderr))
+	if diag == "" {
+		return fmt.Errorf("fetch %s from %s: %w", t.branch, t.remote, err)
 	}
-	return errors.New(msg)
+	if strings.Contains(diag, "couldn't find remote ref") {
+		diag += " (--fetch refreshes a branch; to review a tag or commit, drop --fetch)"
+	}
+	return fmt.Errorf("fetch %s from %s: %w: %s", t.branch, t.remote, err, diag)
+}
+
+func resolveRangeError(ctx context.Context, cc *commonContext, base, to string, err error) error {
+	err = fmt.Errorf("--fetch: resolve %s..%s: %w", base, to, err)
+	if out, _ := cc.GitRunner.Output(ctx, cc.RepoDir, "rev-parse", "--is-shallow-repository"); strings.TrimSpace(string(out)) == "true" {
+		err = fmt.Errorf("%w; this clone is shallow, so deepen it (git fetch --deepen=<n> or --unshallow) and retry", err)
+	}
+	return err
 }
 
 func shortSHA(sha string) string {

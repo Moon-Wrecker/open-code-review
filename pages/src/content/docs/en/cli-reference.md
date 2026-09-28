@@ -112,6 +112,8 @@ staged + unstaged + untracked changes in the current directory's repo.
 | `--repo <path>` | — | current dir | Git repository root. |
 | `--from <ref>` | — | — | Source ref to start the diff from (e.g., `main`). |
 | `--to <ref>` | — | — | Target ref to end the diff at (e.g., `feature-branch`). When set, OCR computes `merge-base(from, to)..to`. |
+| `--fetch` | — | `false` | Fetch the `--from` branch from `--remote` before resolving the range, and review against the fetched remote-tracking branch instead of the local one (`--from origin/main` means branch `main` on `origin`). `--to` is never fetched, so unpushed commits stay in the review. Only that remote-tracking branch is updated; if the fetch fails, the review stops before any LLM call. Requires `--from`/`--to`. |
+| `--remote <name>` | — | `origin` | Remote that `--fetch` reads from. |
 | `--commit <sha>` | `-c` | — | Single commit to review (vs its parent). |
 | `--preview` | `-p` | `false` | Run the filter pipeline but skip the LLM. Prints the file list and exclusion reasons. Honors `--format json`; `--format sarif` is not supported (a preview has no completed findings to emit). |
 | `--no-filter` | — | `false` | Keep all review comments and skip the per-subtask `REVIEW_FILTER_TASK` LLM post-processing call. A subtask reviews a single file or a bundle of related files. |
@@ -138,6 +140,7 @@ staged + unstaged + untracked changes in the current directory's repo.
 > `--commit`, or neither (workspace mode). Mixing them is a hard error.
 > `--resume` supports only range or commit reviews and cannot be combined
 > with `--preview`.
+> `--fetch` and `--remote` work only with `--from`/`--to`.
 
 ### Per-run LLM selection
 
@@ -185,6 +188,18 @@ ocr review --from main --to feature-branch
 OCR computes `merge-base(main, feature-branch)..feature-branch` so you only
 see the diff *introduced by* the feature branch — not unrelated changes
 that landed on `main` since branching.
+
+If your local copy of the base branch may be behind the remote, add `--fetch`:
+
+```bash
+ocr review --fetch --from main --to HEAD
+```
+
+OCR fetches `main` from `origin` (or `--remote <name>`), reviews against the
+fresh `origin/main`, and pins both ends of the range to the commits it
+resolved, so a ref that moves mid-review cannot change what is reviewed.
+Only `refs/remotes/origin/main` is updated; local branches and the working
+tree are left alone. Without `--fetch`, OCR never refreshes remote refs.
 
 #### Commit mode
 

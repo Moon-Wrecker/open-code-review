@@ -333,15 +333,37 @@ func TestFetchReviewBase_RefusesSymbolicDestination(t *testing.T) {
 	}
 }
 
+// The branch is gone from the remote but a stale tracking ref for it is still
+// around: the review must stop on the failed fetch, not carry on with that ref.
 func TestReviewFetch_MissingBranchStopsBeforeTheReview(t *testing.T) {
 	fx := newFetchFixture(t)
+	gitIn(t, fx.user, "update-ref", "refs/remotes/origin/no-such-branch", fx.forkPoint)
 	opts := fx.options("no-such-branch")
 
 	err := executeReviewContext(context.Background(), opts)
-	if err == nil || !strings.Contains(err.Error(), "no-such-branch") || !strings.Contains(err.Error(), "origin") {
+	if err == nil || !strings.HasPrefix(err.Error(), "fetch no-such-branch from origin:") {
 		t.Fatalf("error = %v, want the failed fetch of no-such-branch from origin", err)
 	}
 	assertNoSessionStore(t, fx.home)
+}
+
+// Git exits 0 when it refuses a ref update that would need new shallow roots,
+// as when the remote itself is a shallow clone. The stale tracking ref it leaves
+// behind must not be reviewed as if it were fresh.
+func TestFetchReviewBase_RejectedUpdateIsAnError(t *testing.T) {
+	fx := newFetchFixture(t)
+	commitFile(t, fx.publisher, "more.go", "package more\n", "more")
+	gitIn(t, fx.publisher, "push", "origin", "main")
+	shallowRemote := filepath.Join(t.TempDir(), "shallow-remote")
+	gitIn(t, fx.user, "clone", "--depth", "1", fileURL(fx.remote), shallowRemote)
+	gitIn(t, fx.user, "remote", "add", "mirror", shallowRemote)
+	gitIn(t, fx.user, "update-ref", "refs/remotes/mirror/main", fx.forkPoint)
+
+	opts := fx.options("mirror/main")
+	sealed, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts)
+	if err == nil || !strings.Contains(err.Error(), "did not update refs/remotes/mirror/main") {
+		t.Fatalf("sealed = %+v, err = %v; want the rejected update reported as an error", sealed, err)
+	}
 }
 
 func TestFetchReviewBase_ShallowCloneExplainsMissingHistory(t *testing.T) {

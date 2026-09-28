@@ -412,8 +412,9 @@ rm -rf ~/.opencodereview                                # all state
 ```
 
 OCR doesn't write outside `~/.opencodereview` (apart from the binary
-download via NPM), so removing that directory wipes history, config,
-and per-user rules.
+download via NPM, and the remote-tracking branch that `ocr review --fetch`
+updates in your repository), so removing that directory wipes history,
+config, and per-user rules.
 
 ## See Also
 
