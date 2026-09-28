@@ -12,6 +12,7 @@ import (
 
 	"github.com/alibaba/open-code-review/internal/agent"
 	"github.com/alibaba/open-code-review/internal/diff"
+	"github.com/alibaba/open-code-review/internal/gitcmd"
 	"github.com/alibaba/open-code-review/internal/stdout"
 )
 
@@ -69,6 +70,9 @@ func notABranchError(from string) error {
 	return fmt.Errorf("--fetch needs --from to name a branch, got %q", from)
 }
 
+// checkFetchGitVersion is a variable so tests can simulate an older Git.
+var checkFetchGitVersion = gitcmd.CheckGitVersion
+
 // resolveFetchTarget is the local half of --fetch: it validates --from and
 // --remote and picks the branch to fetch without contacting the remote, so a
 // target that can never be fetched is reported as early as an invalid ref is
@@ -76,6 +80,11 @@ func notABranchError(from string) error {
 func resolveFetchTarget(ctx context.Context, cc *commonContext, opts reviewOptions) (*fetchTarget, error) {
 	if !opts.fetch {
 		return nil, nil
+	}
+	// OCR only warns about an old Git at startup, but the fetch below needs
+	// --porcelain, so fail clearly here instead of with git's usage text.
+	if err := checkFetchGitVersion(); err != nil {
+		return nil, fmt.Errorf("--fetch: %w", err)
 	}
 	remotes, err := cc.GitRunner.Output(ctx, cc.RepoDir, "remote")
 	if err != nil {

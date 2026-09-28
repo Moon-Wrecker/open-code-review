@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/alibaba/open-code-review/internal/diff"
+	"github.com/alibaba/open-code-review/internal/gitcmd"
 	"github.com/alibaba/open-code-review/internal/model"
 	"github.com/alibaba/open-code-review/internal/session"
 	"github.com/alibaba/open-code-review/internal/stdout"
@@ -728,5 +729,27 @@ func TestFetchReviewBase_SingleBranchClone(t *testing.T) {
 	}
 	if sealed.ResolvedBase != fx.forkPoint {
 		t.Errorf("merge base = %s, want %s", sealed.ResolvedBase, fx.forkPoint)
+	}
+}
+
+// --fetch depends on `git fetch --porcelain` (Git 2.41). On older Git the run
+// stops with a clear message before contacting the remote, instead of git's
+// usage text.
+func TestReviewFetch_OldGitIsReportedBeforeFetching(t *testing.T) {
+	fx := newFetchFixture(t)
+	old := checkFetchGitVersion
+	checkFetchGitVersion = func() error {
+		return &gitcmd.VersionTooOldError{Current: gitcmd.GitVersion{Major: 2, Minor: 34}, Minimum: gitcmd.GitVersion{Major: 2, Minor: 41}}
+	}
+	t.Cleanup(func() { checkFetchGitVersion = old })
+
+	opts := fx.options("main")
+	opts.preview = true
+	err := executeReviewContext(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "--fetch") || !strings.Contains(err.Error(), "older than the minimum") {
+		t.Fatalf("error = %v, want --fetch rejected for the old Git", err)
+	}
+	if got := revParse(t, fx.user, "refs/remotes/origin/main"); got != fx.forkPoint {
+		t.Errorf("origin/main moved to %s", got)
 	}
 }
