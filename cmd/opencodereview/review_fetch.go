@@ -69,20 +69,13 @@ func notABranchError(from string) error {
 	return fmt.Errorf("--fetch needs --from to name a branch, got %q", from)
 }
 
-// fetchReviewBase implements --fetch: it refreshes the --from branch from its
-// remote, then freezes the range endpoints so the rest of the review reads the
-// commits resolved here even if the refs move again. It rewrites opts.from to
-// the remote-tracking branch, which is what the session records as the
-// requested base. Without --fetch it does nothing and returns nil.
-//
-// It runs before validateReviewRefs because the --from branch may not exist
-// locally until it has been fetched, so it applies the same guards itself.
-func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions) (*diff.InputResolution, error) {
+// resolveFetchTarget is the local half of --fetch: it validates --from and
+// --remote and picks the branch to fetch without contacting the remote, so a
+// target that can never be fetched is reported as early as an invalid ref is
+// without --fetch. It returns nil without --fetch.
+func resolveFetchTarget(ctx context.Context, cc *commonContext, opts reviewOptions) (*fetchTarget, error) {
 	if !opts.fetch {
 		return nil, nil
-	}
-	if err := validateReviewRefs(cc.RepoDir, reviewOptions{to: opts.to}); err != nil {
-		return nil, err
 	}
 	remotes, err := cc.GitRunner.Output(ctx, cc.RepoDir, "remote")
 	if err != nil {
@@ -92,14 +85,38 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 	if err != nil {
 		return nil, err
 	}
-	dest := target.trackingRef()
-	if _, err := cc.GitRunner.Output(ctx, cc.RepoDir, "check-ref-format", dest); err != nil {
+	if _, err := cc.GitRunner.Output(ctx, cc.RepoDir, "check-ref-format", target.trackingRef()); err != nil {
 		return nil, notABranchError(opts.from)
 	}
-	// Fetching into a symbolic ref writes through to its target, which may be a
-	// local branch.
+	if err := refuseSymbolicDestination(ctx, cc, target.trackingRef()); err != nil {
+		return nil, err
+	}
+	return &target, nil
+}
+
+// refuseSymbolicDestination rejects a destination that is a symbolic ref:
+// fetching into it writes through to its target, which may be a local branch.
+func refuseSymbolicDestination(ctx context.Context, cc *commonContext, dest string) error {
 	if _, err := cc.GitRunner.Output(ctx, cc.RepoDir, "symbolic-ref", "--quiet", dest); err == nil {
-		return nil, fmt.Errorf("--fetch: %s is a symbolic ref; refusing to fetch into it", dest)
+		return fmt.Errorf("--fetch: %s is a symbolic ref; refusing to fetch into it", dest)
+	}
+	return nil
+}
+
+// fetchReviewBase is the network half of --fetch: it fetches the branch
+// resolveFetchTarget chose, then freezes the range endpoints so the rest of the
+// review reads the commits resolved here even if the refs move again. It
+// rewrites opts.from to the remote-tracking branch, which is what the session
+// records as the requested base. It returns nil when target is nil.
+func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions, target *fetchTarget) (*diff.InputResolution, error) {
+	if target == nil {
+		return nil, nil
+	}
+	dest := target.trackingRef()
+	// Checked again here because other checks may have run since
+	// resolveFetchTarget, and this one guards local branches.
+	if err := refuseSymbolicDestination(ctx, cc, dest); err != nil {
+		return nil, err
 	}
 
 	q := newQuietHandle(opts.outputFormat, opts.audience)
@@ -117,7 +134,7 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fetchFailure(target, stderr, err)
+		return nil, fetchFailure(*target, stderr, err)
 	}
 	// Git exits 0 when it refuses an update, e.g. one that would need new
 	// shallow roots; dest is then stale and must not be reviewed.
@@ -130,7 +147,7 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 		return nil, errors.New(msg)
 	}
 	base := target.remote + "/" + target.branch
-	sealed, err := agent.ResolveInput(ctx, agent.Args{
+	resolution, err := agent.ResolveInput(ctx, agent.Args{
 		RepoDir:   cc.RepoDir,
 		From:      tip,
 		To:        opts.to,
@@ -144,9 +161,9 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 	}
 	opts.from = base
 	fmt.Fprintf(w, "[ocr] Resolved base: %s -> %s\n", base, shortSHA(tip))
-	fmt.Fprintf(w, "[ocr] Resolved target: %s -> %s\n", opts.to, shortSHA(sealed.ResolvedHead))
-	fmt.Fprintf(w, "[ocr] Merge base: %s\n", shortSHA(sealed.ResolvedBase))
-	return sealed, nil
+	fmt.Fprintf(w, "[ocr] Resolved target: %s -> %s\n", opts.to, shortSHA(resolution.ResolvedHead))
+	fmt.Fprintf(w, "[ocr] Merge base: %s\n", shortSHA(resolution.ResolvedBase))
+	return resolution, nil
 }
 
 // fetchedTip returns the commit that `git fetch --porcelain --verbose` reports

@@ -146,14 +146,19 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	applyCLIExcludes(cc, splitPaths(opts.excludes))
 
 	// Security: reject ref-option injection before these refs reach git.
-	// With --fetch, --from may not exist locally until it is fetched, so
-	// fetchReviewBase validates the refs itself and then freezes them to
-	// commits; re-resolving its short "<remote>/<branch>" label here could pick
-	// up a local ref of the same name instead of the one it fetched.
-	if !opts.fetch {
-		if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
-			return err
-		}
+	// With --fetch, --from names a branch to fetch rather than a local ref, so
+	// resolveFetchTarget validates it without contacting the remote and only
+	// --to is checked as a ref.
+	target, err := resolveFetchTarget(ctx, cc, opts)
+	if err != nil {
+		return err
+	}
+	refs := opts
+	if target != nil {
+		refs = reviewOptions{to: opts.to}
+	}
+	if err := validateReviewRefs(cc.RepoDir, refs); err != nil {
+		return err
 	}
 
 	bg, err := resolveBackground(cc.RepoDir, opts.background, opts.backgroundFile, opts.commit)
@@ -163,11 +168,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	opts.background = bg
 
 	if opts.preview {
-		fetched, err := fetchReviewBase(ctx, cc, &opts)
-		if err != nil {
-			return err
-		}
-		return runPreviewContext(ctx, cc, opts, out, fetched)
+		return runPreviewContext(ctx, cc, opts, out, target)
 	}
 
 	resumeState, err := loadReviewResumeState(cc.RepoDir, opts)
@@ -194,10 +195,11 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	}
 	cc.Template.ApplyEffort(effort)
 
-	// Fetch only once every check that needs no network has passed, so a run
-	// that was going to fail anyway never contacts the remote or moves its
-	// tracking ref.
-	fetched, err := fetchReviewBase(ctx, cc, &opts)
+	// Fetch only after every check that needs neither the network nor the
+	// fetched commits, so a run that was going to fail on one of them never
+	// contacts the remote. Resume admission below compares the fetched input,
+	// so it has to come after.
+	fetched, err := fetchReviewBase(ctx, cc, &opts, target)
 	if err != nil {
 		return err
 	}
@@ -528,7 +530,7 @@ func validateReviewRefs(repoDir string, opts reviewOptions) error {
 	return nil
 }
 
-func runPreviewContext(ctx context.Context, cc *commonContext, opts reviewOptions, out io.Writer, sealed *diff.InputResolution) error {
+func runPreviewContext(ctx context.Context, cc *commonContext, opts reviewOptions, out io.Writer, target *fetchTarget) error {
 	maxTokens, err := previewMaxTokens(cc.Template.MaxTokens, opts.maxTokens)
 	if err != nil {
 		return err
@@ -537,6 +539,18 @@ func runPreviewContext(ctx context.Context, cc *commonContext, opts reviewOption
 	// template. Selection reads MaxTokens and nothing else.
 	tpl := *cc.Template
 	tpl.MaxTokens = maxTokens
+
+	// The fetch waits for the local checks above, and a format the preview can
+	// never render fails before it rather than after.
+	var sealed *diff.InputResolution
+	if target != nil {
+		if err := previewFormatError(opts.outputFormat); err != nil {
+			return err
+		}
+		if sealed, err = fetchReviewBase(ctx, cc, &opts, target); err != nil {
+			return err
+		}
+	}
 
 	preview, err := agent.Preview(ctx, agent.Args{
 		RepoDir:     cc.RepoDir,

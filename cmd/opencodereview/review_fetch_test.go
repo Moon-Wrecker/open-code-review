@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alibaba/open-code-review/internal/diff"
 	"github.com/alibaba/open-code-review/internal/model"
 	"github.com/alibaba/open-code-review/internal/session"
 	"github.com/alibaba/open-code-review/internal/stdout"
@@ -75,6 +77,16 @@ func (fx fetchFixture) commonContext(t *testing.T) *commonContext {
 		t.Fatalf("loadCommonContext: %v", err)
 	}
 	return cc
+}
+
+// fetchBase runs both halves of --fetch the way executeReviewContext does:
+// the local target resolution, then the fetch itself.
+func fetchBase(ctx context.Context, cc *commonContext, opts *reviewOptions) (*diff.InputResolution, error) {
+	target, err := resolveFetchTarget(ctx, cc, *opts)
+	if err != nil {
+		return nil, err
+	}
+	return fetchReviewBase(ctx, cc, opts, target)
 }
 
 func previewPaths(p model.Preview) []string {
@@ -223,7 +235,7 @@ func TestFetchReviewBase_FreezesFetchedEndpoints(t *testing.T) {
 	fx := newFetchFixture(t)
 	opts := fx.options("main")
 
-	sealed, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts)
+	sealed, err := fetchBase(context.Background(), fx.commonContext(t), &opts)
 	if err != nil {
 		t.Fatalf("fetchReviewBase: %v", err)
 	}
@@ -258,7 +270,7 @@ func TestFetchReviewBase_WritesOnlyTheTrackingRef(t *testing.T) {
 	before := refSnapshot(t, fx.user)
 
 	opts := fx.options("main")
-	if _, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts); err != nil {
+	if _, err := fetchBase(context.Background(), fx.commonContext(t), &opts); err != nil {
 		t.Fatalf("fetchReviewBase: %v", err)
 	}
 
@@ -292,7 +304,7 @@ func TestFetchReviewBase_FollowsForcePushedBase(t *testing.T) {
 	rewritten := revParse(t, fx.publisher, "HEAD")
 
 	opts := fx.options("main")
-	sealed, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts)
+	sealed, err := fetchBase(context.Background(), fx.commonContext(t), &opts)
 	if err != nil || sealed == nil {
 		t.Fatalf("a rewritten base must still be fetched and sealed: sealed = %v, err = %v", sealed, err)
 	}
@@ -310,7 +322,7 @@ func TestFetchReviewBase_RejectsNonBranchesBeforeFetching(t *testing.T) {
 	for _, from := range []string{"HEAD~1", "a..b", "@{u}", "x:y", "origin/"} {
 		t.Run(from, func(t *testing.T) {
 			opts := fx.options(from)
-			if _, err := fetchReviewBase(context.Background(), cc, &opts); err == nil || !strings.Contains(err.Error(), "name a branch") {
+			if _, err := fetchBase(context.Background(), cc, &opts); err == nil || !strings.Contains(err.Error(), "name a branch") {
 				t.Fatalf("fetchReviewBase(--from %q) error = %v, want a branch-name rejection", from, err)
 			}
 			if got := revParse(t, fx.user, "refs/remotes/origin/main"); got != fx.forkPoint {
@@ -328,7 +340,7 @@ func TestFetchReviewBase_RefusesSymbolicDestination(t *testing.T) {
 	gitIn(t, fx.user, "symbolic-ref", "refs/remotes/origin/trap", "refs/heads/main")
 
 	opts := fx.options("trap")
-	if _, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts); err == nil || !strings.Contains(err.Error(), "symbolic") {
+	if _, err := fetchBase(context.Background(), fx.commonContext(t), &opts); err == nil || !strings.Contains(err.Error(), "symbolic") {
 		t.Fatalf("error = %v, want a refusal to fetch into a symbolic ref", err)
 	}
 	if got := revParse(t, fx.user, "refs/heads/main"); got != fx.staleMain {
@@ -368,7 +380,7 @@ func TestFetchReviewBase_RejectedUpdateIsAnError(t *testing.T) {
 	gitIn(t, fx.user, "update-ref", "refs/remotes/mirror/main", fx.forkPoint)
 
 	opts := fx.options("mirror/main")
-	sealed, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts)
+	sealed, err := fetchBase(context.Background(), fx.commonContext(t), &opts)
 	if err == nil || !strings.Contains(err.Error(), "did not update refs/remotes/mirror/main") {
 		t.Fatalf("sealed = %+v, err = %v; want the rejected update reported as an error", sealed, err)
 	}
@@ -385,7 +397,7 @@ func TestFetchReviewBase_ShallowCloneExplainsMissingHistory(t *testing.T) {
 	}
 
 	opts := reviewOptions{repoDir: shallow, from: "main", to: "HEAD", fetch: true, outputFormat: "text", audience: "agent"}
-	if _, err := fetchReviewBase(context.Background(), cc, &opts); err == nil || !strings.Contains(err.Error(), "shallow") {
+	if _, err := fetchBase(context.Background(), cc, &opts); err == nil || !strings.Contains(err.Error(), "shallow") {
 		t.Fatalf("error = %v, want a hint that the clone is shallow", err)
 	}
 }
@@ -433,7 +445,7 @@ func TestFetchReviewBase_ProgressFollowsAudience(t *testing.T) {
 			defer stdout.Swap(&buf)()
 			opts := fx.options("main")
 			opts.audience = tc.audience
-			if _, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts); err != nil {
+			if _, err := fetchBase(context.Background(), fx.commonContext(t), &opts); err != nil {
 				t.Fatalf("fetchReviewBase: %v", err)
 			}
 			out := buf.String()
@@ -442,28 +454,6 @@ func TestFetchReviewBase_ProgressFollowsAudience(t *testing.T) {
 				t.Errorf("audience %s: base and merge-base shown = %v, want %v; output:\n%s", tc.audience, shown, tc.want, out)
 			}
 		})
-	}
-}
-
-// The preview must read the endpoints the fetch froze, not re-resolve --to.
-func TestReviewFetch_PreviewKeepsTheFrozenHead(t *testing.T) {
-	fx := newFetchFixture(t)
-	cc := fx.commonContext(t)
-	opts := fx.options("main")
-	sealed, err := fetchReviewBase(context.Background(), cc, &opts)
-	if err != nil {
-		t.Fatalf("fetchReviewBase: %v", err)
-	}
-	commitFile(t, fx.user, "late.go", "package late\n", "lands after the seal")
-
-	opts.outputFormat = "json"
-	out := captureStdout(t, func() {
-		if err := runPreviewContext(context.Background(), cc, opts, os.Stdout, sealed); err != nil {
-			t.Fatalf("runPreviewContext: %v", err)
-		}
-	})
-	if got := previewPaths(decodeSinglePreviewJSON(t, out)); !slices.Equal(got, []string{"feature.go"}) {
-		t.Errorf("preview paths = %v, want only feature.go from the frozen head", got)
 	}
 }
 
@@ -508,7 +498,7 @@ func TestFetchReviewBase_ExplicitRemoteReachesBranchNamedLikeARemote(t *testing.
 
 	opts := fx.options("release/1.2")
 	opts.remote = "origin"
-	if _, err := fetchReviewBase(context.Background(), fx.commonContext(t), &opts); err != nil {
+	if _, err := fetchBase(context.Background(), fx.commonContext(t), &opts); err != nil {
 		t.Fatalf("fetchReviewBase: %v", err)
 	}
 	if opts.from != "origin/release/1.2" {
@@ -552,5 +542,191 @@ func TestReviewFetch_LocalFailureStopsBeforeFetching(t *testing.T) {
 	}
 	if got := revParse(t, fx.user, "refs/remotes/origin/main"); got != fx.forkPoint {
 		t.Errorf("origin/main moved to %s: the fetch ran before the local checks", got)
+	}
+}
+
+// A preview in a format it can never produce fails before the fetch runs.
+func TestReviewFetch_UnsupportedPreviewFormatStopsBeforeFetching(t *testing.T) {
+	fx := newFetchFixture(t)
+	opts := fx.options("main")
+	opts.preview = true
+	opts.outputFormat = "sarif"
+
+	err := executeReviewContext(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "--format sarif is not supported with --preview") {
+		t.Fatalf("error = %v, want the unsupported preview format reported", err)
+	}
+	if got := revParse(t, fx.user, "refs/remotes/origin/main"); got != fx.forkPoint {
+		t.Errorf("origin/main moved to %s: the fetch ran before the format check", got)
+	}
+}
+
+// The preview path applies the same rule: its own local checks, such as
+// loading the config it reads max tokens from, run before the fetch.
+func TestReviewFetch_PreviewLocalFailureStopsBeforeFetching(t *testing.T) {
+	fx := newFetchFixture(t)
+	configDir := filepath.Join(fx.home, ".opencodereview")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	opts := fx.options("main")
+	opts.preview = true
+
+	if err := executeReviewContext(context.Background(), opts); err == nil || !strings.Contains(err.Error(), "load app config") {
+		t.Fatalf("error = %v, want the broken config reported", err)
+	}
+	if got := revParse(t, fx.user, "refs/remotes/origin/main"); got != fx.forkPoint {
+		t.Errorf("origin/main moved to %s: the fetch ran before the preview's local checks", got)
+	}
+}
+
+// A bad --to is reported as such, before anything else is loaded or fetched,
+// exactly as it is without --fetch.
+func TestReviewFetch_BadToIsReportedFirst(t *testing.T) {
+	fx := newFetchFixture(t)
+	opts := fx.options("main")
+	opts.to = "typo-branch"
+
+	if err := executeReviewContext(context.Background(), opts); err == nil || !strings.Contains(err.Error(), `--to value "typo-branch"`) {
+		t.Fatalf("error = %v, want the invalid --to reported", err)
+	}
+	if got := revParse(t, fx.user, "refs/remotes/origin/main"); got != fx.forkPoint {
+		t.Errorf("origin/main moved to %s: the fetch ran despite the invalid --to", got)
+	}
+}
+
+// A --from or --remote that --fetch can never use is reported before any
+// config, resume or preview check runs, as a bad --from is without --fetch,
+// and nothing is fetched.
+func TestReviewFetch_BadFromIsReportedFirst(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		from    string
+		remote  string
+		preview bool
+		wantErr string
+	}{
+		{name: "revision expression", from: "HEAD~1", wantErr: "name a branch"},
+		{name: "unknown remote", from: "main", remote: "nosuch", wantErr: `"nosuch" is not a configured git remote`},
+		{name: "revision expression in preview", from: "HEAD~1", preview: true, wantErr: "name a branch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newFetchFixture(t)
+			configDir := filepath.Join(fx.home, ".opencodereview")
+			if err := os.MkdirAll(configDir, 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte("{not json"), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			opts := fx.options(tc.from)
+			opts.remote = tc.remote
+			opts.preview = tc.preview
+
+			if err := executeReviewContext(context.Background(), opts); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q reported before the broken config", err, tc.wantErr)
+			}
+			if got := revParse(t, fx.user, "refs/remotes/origin/main"); got != fx.forkPoint {
+				t.Errorf("origin/main moved to %s", got)
+			}
+		})
+	}
+}
+
+// Without --fetch a preview keeps its original order of checks: the config it
+// reads max tokens from is loaded before the output format is rejected.
+func TestReviewPreview_WithoutFetchKeepsItsErrorOrder(t *testing.T) {
+	fx := newFetchFixture(t)
+	configDir := filepath.Join(fx.home, ".opencodereview")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	opts := fx.options("main")
+	opts.fetch = false
+	opts.preview = true
+	opts.outputFormat = "sarif"
+
+	if err := executeReviewContext(context.Background(), opts); err == nil || !strings.Contains(err.Error(), "load app config") {
+		t.Fatalf("error = %v, want the config error first, as before --fetch existed", err)
+	}
+}
+
+func TestFetchedTip(t *testing.T) {
+	const dest = "refs/remotes/origin/main"
+	const oldID = "1111111111111111111111111111111111111111"
+	const newID = "2222222222222222222222222222222222222222"
+	tests := []struct {
+		name      string
+		porcelain string
+		want      string
+		wantOK    bool
+	}{
+		{name: "fast-forward", porcelain: "  " + oldID + " " + newID + " " + dest + "\n", want: newID, wantOK: true},
+		{name: "forced update", porcelain: "+ " + oldID + " " + newID + " " + dest + "\n", want: newID, wantOK: true},
+		{name: "new ref", porcelain: "* 0000000000000000000000000000000000000000 " + newID + " " + dest + "\n", want: newID, wantOK: true},
+		{name: "up to date", porcelain: "= " + newID + " " + newID + " " + dest + "\n", want: newID, wantOK: true},
+		{name: "rejected", porcelain: "! " + oldID + " " + newID + " " + dest + "\n"},
+		{name: "refused and left out", porcelain: ""},
+		{name: "another ref only", porcelain: "  " + oldID + " " + newID + " refs/remotes/origin/other\n"},
+		{name: "human-readable summary", porcelain: " = [up to date]      main       -> origin/main\n"},
+		{name: "windows line ending", porcelain: "  " + oldID + " " + newID + " " + dest + "\r\n", want: newID, wantOK: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := fetchedTip(tc.porcelain, dest)
+			if got != tc.want || ok != tc.wantOK {
+				t.Errorf("fetchedTip() = (%q, %v), want (%q, %v)", got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestFetchFailure(t *testing.T) {
+	target := fetchTarget{remote: "origin", branch: "gone"}
+	exitErr := errors.New("exit status 128")
+
+	missing := fetchFailure(target, "fatal: couldn't find remote ref refs/heads/gone\n", exitErr)
+	if !strings.HasPrefix(missing.Error(), "fetch gone from origin:") || !strings.Contains(missing.Error(), "drop --fetch") {
+		t.Errorf("missing branch: %v, want the fetch named and the tag/commit hint", missing)
+	}
+	if !errors.Is(missing, exitErr) {
+		t.Error("the git error must stay in the chain")
+	}
+	if escaped := fetchFailure(target, "fatal: bad\x1b[31m remote\n", exitErr); strings.ContainsRune(escaped.Error(), '\x1b') {
+		t.Errorf("terminal control characters from the remote reached the error: %q", escaped)
+	}
+	if bare := fetchFailure(target, "", exitErr); !errors.Is(bare, exitErr) || strings.Contains(bare.Error(), "drop --fetch") {
+		t.Errorf("empty stderr: %v, want only the wrapped git error", bare)
+	}
+}
+
+// CI checkouts are often single-branch: the configured refspec covers only the
+// checked-out branch, so origin/main does not exist until --fetch creates it.
+func TestFetchReviewBase_SingleBranchClone(t *testing.T) {
+	fx := newFetchFixture(t)
+	gitIn(t, fx.user, "push", "origin", "feature")
+	clone := filepath.Join(t.TempDir(), "single")
+	gitIn(t, fx.user, "clone", "--single-branch", "--branch", "feature", fx.remote, clone)
+	cc, err := loadCommonContext(clone, "", "HEAD", 0, 0, true)
+	if err != nil {
+		t.Fatalf("loadCommonContext: %v", err)
+	}
+
+	opts := reviewOptions{repoDir: clone, from: "main", to: "HEAD", fetch: true, outputFormat: "text", audience: "agent"}
+	sealed, err := fetchBase(context.Background(), cc, &opts)
+	if err != nil || sealed == nil {
+		t.Fatalf("fetchBase: sealed = %v, err = %v", sealed, err)
+	}
+	if got := revParse(t, clone, "refs/remotes/origin/main"); got != fx.remoteTip {
+		t.Errorf("origin/main = %s, want the remote tip %s", got, fx.remoteTip)
+	}
+	if sealed.ResolvedBase != fx.forkPoint {
+		t.Errorf("merge base = %s, want %s", sealed.ResolvedBase, fx.forkPoint)
 	}
 }
