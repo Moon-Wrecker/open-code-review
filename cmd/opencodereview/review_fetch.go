@@ -121,14 +121,18 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 	}
 	// Git exits 0 when it refuses an update, e.g. one that would need new
 	// shallow roots; dest is then stale and must not be reviewed.
-	tip, ok := fetchedTip(out, dest)
-	if !ok {
+	if !fetchedDestination(out, dest) {
 		msg := fmt.Sprintf("fetch %s from %s: git did not update %s", target.branch, target.remote, dest)
 		if diag := sanitizeTerminal(strings.TrimSpace(stderr)); diag != "" {
 			msg += ": " + diag
 		}
 		return nil, errors.New(msg)
 	}
+	tipOut, err := cc.GitRunner.Output(ctx, cc.RepoDir, "rev-parse", dest+"^{commit}")
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s from %s: read %s after fetch: %w", target.branch, target.remote, dest, err)
+	}
+	tip := strings.TrimSpace(string(tipOut))
 	base := target.remote + "/" + target.branch
 	sealed, err := agent.ResolveInput(ctx, agent.Args{
 		RepoDir:   cc.RepoDir,
@@ -149,19 +153,49 @@ func fetchReviewBase(ctx context.Context, cc *commonContext, opts *reviewOptions
 	return sealed, nil
 }
 
-// fetchedTip returns the commit that `git fetch --porcelain --verbose` reports
-// for dest. Lines read "<flag> <old> <new> <ref>"; a refused update is flagged
-// '!' or left out entirely.
-func fetchedTip(porcelain, dest string) (string, bool) {
+// fetchedDestination reports whether fetch porcelain output confirms dest was
+// accepted. It supports both OID and arrow forms, and treats '!' as a refusal.
+func fetchedDestination(porcelain, dest string) bool {
+	shortDest := strings.TrimPrefix(dest, "refs/remotes/")
 	for _, line := range strings.Split(porcelain, "\n") {
-		if len(line) < 2 || !strings.ContainsRune(" +*=", rune(line[0])) {
+		if len(line) < 2 {
 			continue
 		}
-		if f := strings.Fields(line[2:]); len(f) == 3 && f[2] == dest {
-			return f[1], true
+		flag := rune(line[0])
+		if flag == '!' {
+			if fetchDestination(line[1:]) == dest || fetchDestination(line[1:]) == shortDest {
+				return false
+			}
+			continue
+		}
+		if !strings.ContainsRune(" +*=t-", flag) {
+			continue
+		}
+		gotDest := fetchDestination(line[1:])
+		if gotDest == dest || gotDest == shortDest {
+			return true
 		}
 	}
-	return "", false
+	return false
+}
+
+func fetchDestination(line string) string {
+	rest := strings.TrimSpace(line)
+	if rest == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(rest, "->"); idx >= 0 {
+		rhs := strings.Fields(strings.TrimSpace(rest[idx+2:]))
+		if len(rhs) > 0 {
+			return rhs[0]
+		}
+		return ""
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[len(fields)-1]
 }
 
 func fetchFailure(t fetchTarget, stderr string, err error) error {

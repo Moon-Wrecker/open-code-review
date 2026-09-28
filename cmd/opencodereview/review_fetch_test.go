@@ -533,3 +533,41 @@ func TestReviewFetch_ShadowingTagDoesNotFailTheRun(t *testing.T) {
 		t.Errorf("preview paths = %v, want only feature.go", got)
 	}
 }
+
+func TestFetchedDestination(t *testing.T) {
+	const full = "refs/remotes/origin/main"
+	const short = "origin/main"
+	tests := []struct {
+		name      string
+		porcelain string
+		want      bool
+	}{
+		{
+			name:      "oid format accepted",
+			porcelain: "= 66a6057b 66a6057b " + full,
+			want:      true,
+		},
+		{
+			name:      "arrow format accepted",
+			porcelain: "= [up to date] main -> " + short,
+			want:      true,
+		},
+		{
+			name:      "rejected destination",
+			porcelain: "! [rejected] main -> " + short,
+			want:      false,
+		},
+		{
+			name:      "other destination only",
+			porcelain: "= 66a6057b 66a6057b refs/remotes/origin/other",
+			want:      false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fetchedDestination(tc.porcelain, full); got != tc.want {
+				t.Errorf("fetchedDestination() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
