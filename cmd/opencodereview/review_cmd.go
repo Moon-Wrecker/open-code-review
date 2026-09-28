@@ -145,16 +145,12 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	}
 	applyCLIExcludes(cc, splitPaths(opts.excludes))
 
-	fetched, err := fetchReviewBase(ctx, cc, &opts)
-	if err != nil {
-		return err
-	}
-
 	// Security: reject ref-option injection before these refs reach git.
-	// fetchReviewBase has already validated both endpoints and frozen them to
-	// commits; re-resolving its short "<remote>/<branch>" label could pick up a
-	// local ref of the same name instead of the one it fetched.
-	if fetched == nil {
+	// With --fetch, --from may not exist locally until it is fetched, so
+	// fetchReviewBase validates the refs itself and then freezes them to
+	// commits; re-resolving its short "<remote>/<branch>" label here could pick
+	// up a local ref of the same name instead of the one it fetched.
+	if !opts.fetch {
 		if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
 			return err
 		}
@@ -167,6 +163,10 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	opts.background = bg
 
 	if opts.preview {
+		fetched, err := fetchReviewBase(ctx, cc, &opts)
+		if err != nil {
+			return err
+		}
 		return runPreviewContext(ctx, cc, opts, out, fetched)
 	}
 
@@ -193,6 +193,14 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 		return err
 	}
 	cc.Template.ApplyEffort(effort)
+
+	// Fetch only once every check that needs no network has passed, so a run
+	// that was going to fail anyway never contacts the remote or moves its
+	// tracking ref.
+	fetched, err := fetchReviewBase(ctx, cc, &opts)
+	if err != nil {
+		return err
+	}
 
 	// Strictly before agent.New, so a rejected resume persists nothing. The sealed
 	// input it returns pins the run to the very commits this check passed on, so

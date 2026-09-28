@@ -340,6 +340,8 @@ func TestFetchReviewBase_RefusesSymbolicDestination(t *testing.T) {
 // around: the review must stop on the failed fetch, not carry on with that ref.
 func TestReviewFetch_MissingBranchStopsBeforeTheReview(t *testing.T) {
 	fx := newFetchFixture(t)
+	llmServer := newFakeLLM()
+	startFakeLLM(t, llmServer)
 	gitIn(t, fx.user, "update-ref", "refs/remotes/origin/no-such-branch", fx.forkPoint)
 	opts := fx.options("no-such-branch")
 
@@ -347,7 +349,10 @@ func TestReviewFetch_MissingBranchStopsBeforeTheReview(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "fetch no-such-branch from origin:") {
 		t.Fatalf("error = %v, want the failed fetch of no-such-branch from origin", err)
 	}
-	assertNoSessionStore(t, fx.home)
+	if requests := llmServer.attemptCounts(); len(requests) != 0 {
+		t.Errorf("a failed fetch still reached the LLM: %v", requests)
+	}
+	assertNoSessionStore(t, os.Getenv("HOME"))
 }
 
 // Git exits 0 when it refuses a ref update that would need new shallow roots,
@@ -531,5 +536,21 @@ func TestReviewFetch_ShadowingTagDoesNotFailTheRun(t *testing.T) {
 	})
 	if got := previewPaths(decodeSinglePreviewJSON(t, out)); !slices.Equal(got, []string{"feature.go"}) {
 		t.Errorf("preview paths = %v, want only feature.go", got)
+	}
+}
+
+// Checks that need no network run before the fetch, so a run that was going to
+// fail on them never contacts the remote or moves the tracking ref.
+func TestReviewFetch_LocalFailureStopsBeforeFetching(t *testing.T) {
+	fx := newFetchFixture(t)
+	opts := fx.options("main")
+	opts.resume = "no-such-session"
+
+	err := executeReviewContext(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "resume") {
+		t.Fatalf("error = %v, want the unknown resume session reported", err)
+	}
+	if got := revParse(t, fx.user, "refs/remotes/origin/main"); got != fx.forkPoint {
+		t.Errorf("origin/main moved to %s: the fetch ran before the local checks", got)
 	}
 }
